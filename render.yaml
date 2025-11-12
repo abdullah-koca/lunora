@@ -1,0 +1,37 @@
+services:
+  - type: web
+    name: paytr-backend
+    env: node
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PAYTR_MERCHANT_ID
+        sync: false
+      - key: PAYTR_MERCHANT_KEY
+        sync: false
+      - key: PAYTR_MERCHANT_SALT
+        sync: false
+      - key: PAYTR_PUBLIC_BASE_URL
+        value: https://lunoraclothing.shop
+      - key: PAYTR_SERVER_PUBLIC_URL
+        fromService:
+          type: web
+          name: paytr-backend
+          property: host
+      - key: PAYTR_ALLOWED_ORIGINS
+        value: https://lunoraclothing.shop
+      - key: PAYTR_SERVER_PORT
+        value: 10000
+      - key: PAYTR_DEBUG_ON
+        value: 0
+      - key: PAYTR_TEST_MODE
+        value: 0
+      - key: PAYTR_LANG
+        value: tr
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+
