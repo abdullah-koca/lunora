@@ -113,14 +113,22 @@ let supabaseAdmin = null;
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-if (supabaseUrl && supabaseServiceRoleKey) {
-  const { createClient } = await import('@supabase/supabase-js');
-  supabaseAdmin = createClient(supabaseUrl, supabaseServiceRoleKey, {
-    auth: {
-      persistSession: false
+// Supabase client'ı async olarak initialize et
+(async () => {
+  if (supabaseUrl && supabaseServiceRoleKey) {
+    try {
+      const { createClient } = await import('@supabase/supabase-js');
+      supabaseAdmin = createClient(supabaseUrl, supabaseServiceRoleKey, {
+        auth: {
+          persistSession: false
+        }
+      });
+      console.log('[PayTR] Supabase admin client başlatıldı');
+    } catch (error) {
+      console.error('[PayTR] Supabase client başlatılamadı:', error);
     }
-  });
-}
+  }
+})();
 
 app.post('/api/paytr/get-token', async (req, res) => {
   try {
