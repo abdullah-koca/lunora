@@ -319,7 +319,7 @@ app.post('/api/paytr/callback', async (req, res) => {
 });
 
 // Static dosyaları serve et (production için) - API route'larından SONRA
-const distPath = path.join(__dirname, '..', 'dist');
+const distPath = path.join(__dirname, 'dist');
 if (fs.existsSync(distPath)) {
   // Static dosyaları serve et
   app.use(express.static(distPath));
