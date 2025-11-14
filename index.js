@@ -124,6 +124,9 @@ const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   }
 })();
 
+// Geçici sipariş bilgilerini sakla (memory'de - production'da Redis kullanılabilir)
+const pendingOrders = new Map();
+
 app.post('/api/paytr/get-token', async (req, res) => {
   try {
     const {
@@ -134,7 +137,8 @@ app.post('/api/paytr/get-token', async (req, res) => {
       maxInstallment = 0,
       testMode,
       customer,
-      basket
+      basket,
+      orderData // Frontend'den sipariş bilgileri
     } = req.body || {};
 
     if (!totalAmount) {
@@ -240,6 +244,19 @@ app.post('/api/paytr/get-token', async (req, res) => {
       });
     }
 
+    // Sipariş bilgilerini geçici olarak sakla (callback'te kullanılacak)
+    if (orderData) {
+      pendingOrders.set(generatedOid, {
+        ...orderData,
+        merchantOid: generatedOid,
+        createdAt: new Date().toISOString()
+      });
+      // 1 saat sonra otomatik temizle (memory leak önleme)
+      setTimeout(() => {
+        pendingOrders.delete(generatedOid);
+      }, 3600000);
+    }
+
     return res.json({
       token: data.token,
       merchantOid: generatedOid,
@@ -280,29 +297,89 @@ app.post('/api/paytr/callback', async (req, res) => {
     }
 
     if (supabaseAdmin) {
-      const updateData =
-        payload.status === 'success'
-          ? {
-              payment_status: 'paid',
-              status: 'confirmed'
-            }
-          : {
-              payment_status: 'failed',
-              status: 'cancelled'
-            };
+      // Geçici sipariş bilgilerini al
+      const pendingOrder = pendingOrders.get(payload.merchant_oid);
 
-      await supabaseAdmin
-        .from('orders')
-        .update({
-          ...updateData,
-          notes: JSON.stringify({
-            paymentProvider: 'paytr',
-            merchantOid: payload.merchant_oid,
-            status: payload.status,
-            message: payload.failed_reason || payload.failed_reason_msg || null
-          })
-        })
-        .eq('order_number', payload.merchant_oid);
+      if (payload.status === 'success') {
+        // ÖDEME BAŞARILI - ŞİMDİ SİPARİŞ OLUŞTUR
+        if (pendingOrder) {
+          // Siparişi oluştur
+          const { data: createdOrder, error: createError } = await supabaseAdmin
+            .from('orders')
+            .insert({
+              user_id: pendingOrder.user_id,
+              customer_email: pendingOrder.customer_email,
+              name_surname: pendingOrder.name_surname,
+              order_number: payload.merchant_oid,
+              total_amount: pendingOrder.total_amount,
+              payment_method: 'paytr',
+              payment_status: 'paid',
+              shipping_address: pendingOrder.shipping_address,
+              order_items: pendingOrder.order_items,
+              status: 'confirmed',
+              notes: JSON.stringify({
+                paymentProvider: 'paytr',
+                merchantOid: payload.merchant_oid,
+                status: 'paid',
+                paytrTotalAmount: payload.total_amount
+              })
+            })
+            .select()
+            .single();
+
+          if (createError) {
+            console.error('[PayTR] Sipariş oluşturma hatası:', createError);
+          } else {
+            console.log('[PayTR] Sipariş oluşturuldu:', createdOrder.id);
+            
+            // Stokları güncelle
+            if (pendingOrder.order_items && Array.isArray(pendingOrder.order_items)) {
+              for (const item of pendingOrder.order_items) {
+                try {
+                  const { data: currentProduct } = await supabaseAdmin
+                    .from('products')
+                    .select('id, stock')
+                    .eq('id', item.product_id)
+                    .single();
+
+                  if (currentProduct) {
+                    const currentStock = Number(currentProduct.stock) || 0;
+                    const newStock = Math.max(0, currentStock - item.quantity);
+                    await supabaseAdmin
+                      .from('products')
+                      .update({ stock: newStock })
+                      .eq('id', item.product_id);
+                  }
+                } catch (stockError) {
+                  console.error('[PayTR] Stok güncelleme hatası:', stockError);
+                }
+              }
+            }
+
+            // Geçici sipariş bilgisini temizle
+            pendingOrders.delete(payload.merchant_oid);
+          }
+        } else {
+          // Eğer pending order yoksa, mevcut siparişi güncelle (eski sistem uyumluluğu)
+          await supabaseAdmin
+            .from('orders')
+            .update({
+              payment_status: 'paid',
+              status: 'confirmed',
+              notes: JSON.stringify({
+                paymentProvider: 'paytr',
+                merchantOid: payload.merchant_oid,
+                status: 'paid',
+                paytrTotalAmount: payload.total_amount
+              })
+            })
+            .eq('order_number', payload.merchant_oid);
+        }
+      } else {
+        // ÖDEME BAŞARISIZ - Sipariş oluşturma, sadece log
+        console.log('[PayTR] Ödeme başarısız:', payload.merchant_oid);
+        pendingOrders.delete(payload.merchant_oid);
+      }
     }
 
     res.send('OK');
