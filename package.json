@@ -10,7 +10,6 @@
     "preview": "vite preview",
     "paytr:server": "node index.js",
     "start": "node index.js",
-    "postinstall": "npm run build"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.4",

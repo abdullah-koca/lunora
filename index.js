@@ -5,13 +5,7 @@ import crypto from 'crypto';
 import axios from 'axios';
 import microtime from 'microtime';
 import pkg from 'nodejs-base64-converter';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import { dirname } from 'path';
-import fs from 'fs';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+// Path ve fs import'ları kaldırıldı - static serving yok
 
 const { encode: base64Encode } = pkg;
 
@@ -318,33 +312,7 @@ app.post('/api/paytr/callback', async (req, res) => {
   }
 });
 
-// Static dosyaları serve et (production için) - API route'larından SONRA
-const distPath = path.join(__dirname, 'dist');
-if (fs.existsSync(distPath)) {
-  // Static dosyaları serve et
-  app.use(express.static(distPath));
-  
-  // SPA için: tüm route'ları index.html'e yönlendir (API route'ları hariç)
-  app.get('*', (req, res) => {
-    // API route'larını atla (zaten yukarıda handle edildi)
-    if (req.path.startsWith('/api/')) {
-      return res.status(404).json({ error: 'API endpoint not found' });
-    }
-    
-    // Static dosyalar için
-    const filePath = path.join(distPath, req.path);
-    if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
-      return res.sendFile(filePath);
-    }
-    
-    // SPA için index.html'e yönlendir
-    res.sendFile(path.join(distPath, 'index.html'));
-  });
-  
-  console.log(`[PayTR] Static dosyalar serve ediliyor: ${distPath}`);
-} else {
-  console.warn(`[PayTR] Dist klasörü bulunamadı: ${distPath}. Static dosyalar serve edilmeyecek.`);
-}
+// Backend sadece API serve ediyor, frontend ayrı host'ta
 
 const port = Number(process.env.PORT || process.env.PAYTR_SERVER_PORT || 3001);
 
