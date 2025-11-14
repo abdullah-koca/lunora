@@ -5,9 +5,23 @@ import crypto from 'crypto';
 import axios from 'axios';
 import microtime from 'microtime';
 import pkg from 'nodejs-base64-converter';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+import fs from 'fs';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
 const { encode: base64Encode } = pkg;
 
-dotenv.config({ path: '.env.local' });
+// Önce .env.local'i oku (local development için), yoksa .env'i oku
+try {
+  dotenv.config({ path: '.env.local' });
+} catch {
+  // .env.local yoksa .env'i oku
+}
+dotenv.config(); // .env dosyasını da oku (eksik değerler için)
 
 const merchantId = process.env.PAYTR_MERCHANT_ID;
 const merchantKey = process.env.PAYTR_MERCHANT_KEY;
@@ -27,18 +41,46 @@ const allowedOrigins = process.env.PAYTR_ALLOWED_ORIGINS
 app.use(
   cors({
     origin(origin, callback) {
-      if (!origin || allowedOrigins.length === 0 || allowedOrigins.includes(origin)) {
+      // Eğer origin yoksa (Postman gibi araçlardan) veya allowedOrigins boşsa tüm originlere izin ver
+      if (!origin || allowedOrigins.length === 0) {
         callback(null, origin || '*');
+        return;
+      }
+      
+      // Origin izin verilen listede mi kontrol et
+      if (allowedOrigins.includes(origin)) {
+        callback(null, origin);
+        return;
+      }
+
+      // Local development için localhost:5173'e izin ver
+      if (origin && (origin.includes('localhost:5173') || origin.includes('127.0.0.1:5173'))) {
+        callback(null, origin);
         return;
       }
 
       callback(new Error('Origin not allowed by PayTR server'));
-    }
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization']
   })
 );
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Frontend'in backend URL'ini alabilmesi için endpoint
+app.get('/api/config', (req, res) => {
+  const backendUrl = process.env.PAYTR_SERVER_PUBLIC_URL || 
+                     process.env.RENDER_EXTERNAL_URL || 
+                     `${req.protocol}://${req.get('host')}`;
+  
+  res.json({
+    paytrApiUrl: backendUrl.replace(/\/$/, ''),
+    testMode: process.env.PAYTR_TEST_MODE === '1' || process.env.VITE_PAYTR_TEST_MODE === '1'
+  });
+});
 
 const successUrl =
   process.env.PAYTR_OK_URL ||
@@ -156,26 +198,23 @@ app.post('/api/paytr/get-token', async (req, res) => {
 
     const formData = new URLSearchParams({
       merchant_id: merchantId,
-      merchant_key: merchantKey,
-      merchant_salt: merchantSalt,
+      user_ip: userIp,
+      merchant_oid: generatedOid,
       email: customer.email,
       payment_amount: paymentAmount.toString(),
-      merchant_oid: generatedOid,
+      paytr_token: paytrToken,
+      user_basket: userBasket,
+      debug_on: debugOn,
+      no_installment: noInstallmentFlag,
+      max_installment: maxInstallmentValue.toString(),
       user_name: customer.name,
       user_address: customer.address,
       user_phone: customer.phone,
       merchant_ok_url: successUrl,
       merchant_fail_url: failUrl,
-      user_basket: userBasket,
-      user_ip: userIp,
       timeout_limit: timeoutLimit,
-      debug_on: debugOn,
-      test_mode: testModeFlag,
-      lang: defaultLang,
-      no_installment: noInstallmentFlag,
-      max_installment: maxInstallmentValue.toString(),
       currency,
-      paytr_token: paytrToken
+      test_mode: testModeFlag
     });
 
     if (callbackUrl) {
@@ -270,6 +309,34 @@ app.post('/api/paytr/callback', async (req, res) => {
     res.status(500).send('ERROR');
   }
 });
+
+// Static dosyaları serve et (production için) - API route'larından SONRA
+const distPath = path.join(__dirname, '..', 'dist');
+if (fs.existsSync(distPath)) {
+  // Static dosyaları serve et
+  app.use(express.static(distPath));
+  
+  // SPA için: tüm route'ları index.html'e yönlendir (API route'ları hariç)
+  app.get('*', (req, res) => {
+    // API route'larını atla (zaten yukarıda handle edildi)
+    if (req.path.startsWith('/api/')) {
+      return res.status(404).json({ error: 'API endpoint not found' });
+    }
+    
+    // Static dosyalar için
+    const filePath = path.join(distPath, req.path);
+    if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+      return res.sendFile(filePath);
+    }
+    
+    // SPA için index.html'e yönlendir
+    res.sendFile(path.join(distPath, 'index.html'));
+  });
+  
+  console.log(`[PayTR] Static dosyalar serve ediliyor: ${distPath}`);
+} else {
+  console.warn(`[PayTR] Dist klasörü bulunamadı: ${distPath}. Static dosyalar serve edilmeyecek.`);
+}
 
 const port = Number(process.env.PORT || process.env.PAYTR_SERVER_PORT || 3001);
 
